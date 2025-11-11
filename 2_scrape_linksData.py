@@ -60,9 +60,6 @@ async def scrape_lineup(context, url):
         except Exception:
             pass
 
-        # ---- Serie (div.zrccf > h1) ----
-        serie = await extract_text(page, "div.zrccf h1")
-
         # ---- Tid (Matchstart: <strong>...) ----
         tid = None
         try:
@@ -78,6 +75,9 @@ async def scrape_lineup(context, url):
                     break
         except Exception:
             pass
+
+        # ---- Serie (div.zrccf > h1) ----
+        serie = await extract_text(page, "div.zrccf h1")
 
         # ---- Hemma/Borta (första och andra h3.QmXlT) ----
         hemma = await extract_text(page, "h3.QmXlT", 0)
@@ -116,8 +116,8 @@ async def scrape_lineup(context, url):
         return {
             "url": url,
             "Datum": datum,
-            "Serie": serie,
             "Tid": tid,
+            "Serie": serie,
             "Hemmalag": hemma,
             "Bortalag": borta,
             "Arena": arena,
@@ -127,7 +127,7 @@ async def scrape_lineup(context, url):
 
     except Exception:
         return {
-            "url": url, "Datum": None, "Serie": None, "Tid": None,
+            "url": url, "Datum": None, "Tid": None, "Serie": None,
             "Hemmalag": None, "Bortalag": None, "Arena": None,
             "Domare1": None, "Domare2": None
         }
@@ -155,7 +155,7 @@ async def main():
 
         # Skriv CSV
         out_file = "matches.csv"
-        headers = ["Datum","Serie","Tid","Hemmalag","Bortalag","Arena","Domare1","Domare2","url"]
+        headers = ["Datum","Tid","Serie","Hemmalag","Bortalag","Arena","Domare1","Domare2","url"]
         with open(out_file, "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=headers)
             w.writeheader()
