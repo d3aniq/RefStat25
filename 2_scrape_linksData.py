@@ -2,6 +2,7 @@ import asyncio
 import csv
 from pathlib import Path
 from playwright.async_api import async_playwright, TimeoutError as PWTimeout
+from datetime import datetime
 
 CONCURRENCY = 6
 NAV_TIMEOUT = 12000   # ms
@@ -36,14 +37,43 @@ async def extract_text(page, selector, index=0, attr=None):
     except Exception:
         return None
 
+
+def normalize_date(raw_date):
+    """Försöker omvandla olika datumformat till YYYY-MM-DD."""
+    if not raw_date:
+        return None
+    text = raw_date.strip().replace("Matchdatum:", "").replace("kl", "").strip()
+    for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M", "%d-%m-%Y", "%d/%m/%Y", "%d %B %Y", "%d %b %Y"):
+        try:
+            return datetime.strptime(text, fmt).strftime("%Y-%m-%d")
+        except Exception:
+            continue
+    import re
+    m = re.search(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", text)
+    if m:
+        y, mth, d = m.groups()
+        return f"{int(y):04d}-{int(mth):02d}-{int(d):02d}"
+    m = re.search(r"(\d{1,2})\s+([A-Za-zåäöÅÄÖ]+)\s+(\d{4})", text)
+    if m:
+        d, month_name, y = m.groups()
+        months = {
+            "januari":1, "februari":2, "mars":3, "april":4, "maj":5, "juni":6,
+            "juli":7, "augusti":8, "september":9, "oktober":10, "november":11, "december":12
+        }
+        month_name = month_name.lower()
+        mnum = months.get(month_name)
+        if mnum:
+            return f"{int(y):04d}-{mnum:02d}-{int(d):02d}"
+    return None
+
+
 async def scrape_lineup(context, url):
     page = await context.new_page()
     try:
         await page.route("**/*", block_resources)
         await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
 
-        # ---- Datum (Matchdatum: <strong>...) ----
-        # Välj första strong som ligger i en .d6aBe som börjar med "Matchdatum"
+        # ---- Datum ----
         datum = None
         try:
             await page.wait_for_selector("span.d6aBe", timeout=SEL_TIMEOUT)
@@ -60,7 +90,9 @@ async def scrape_lineup(context, url):
         except Exception:
             pass
 
-        # ---- Tid (Matchstart: <strong>...) ----
+        datum = normalize_date(datum)
+
+        # ---- Tid ----
         tid = None
         try:
             spans = page.locator("span.d6aBe")
@@ -76,14 +108,14 @@ async def scrape_lineup(context, url):
         except Exception:
             pass
 
-        # ---- Serie (div.zrccf > h1) ----
+        # ---- Serie ----
         serie = await extract_text(page, "div.zrccf h1")
 
-        # ---- Hemma/Borta (första och andra h3.QmXlT) ----
+        # ---- Hemma/Borta ----
         hemma = await extract_text(page, "h3.QmXlT", 0)
         borta = await extract_text(page, "h3.QmXlT", 1)
 
-        # ---- Arena (Arena: <a><strong>...</strong></a>) ----
+        # ---- Arena ----
         arena = None
         try:
             spans = page.locator("span.d6aBe")
@@ -91,7 +123,6 @@ async def scrape_lineup(context, url):
             for i in range(count):
                 txt = (await spans.nth(i).inner_text()).strip()
                 if txt.lower().startswith("arena"):
-                    # försök strong först, annars ta hela raden efter kolon
                     try:
                         arena = (await spans.nth(i).locator("strong").inner_text()).strip()
                     except Exception:
@@ -100,12 +131,14 @@ async def scrape_lineup(context, url):
         except Exception:
             pass
 
-        # ---- Domare (td.wMqhM a) ----
+        # ---- Domare ----
         domare = []
         try:
             await page.wait_for_selector("td.wMqhM a", timeout=SEL_TIMEOUT)
-            names = await page.eval_on_selector_all("td.wMqhM a",
-                                                    "els => els.map(e => e.textContent.trim()).filter(Boolean)")
+            names = await page.eval_on_selector_all(
+                "td.wMqhM a",
+                "els => els.map(e => e.textContent.trim()).filter(Boolean)"
+            )
             domare = names[:2] if names else []
         except Exception:
             pass
@@ -113,8 +146,13 @@ async def scrape_lineup(context, url):
         domare1 = domare[0] if len(domare) >= 1 else None
         domare2 = domare[1] if len(domare) >= 2 else None
 
+        # 🟢 Ta bort "/laguppstallning" från URL
+        clean_url = url
+        if clean_url.endswith("/laguppstallning"):
+            clean_url = clean_url[: -len("/laguppstallning")]
+
         return {
-            "url": url,
+            "url": clean_url,   # 🟢 Spara den städade URL:en
             "Datum": datum,
             "Tid": tid,
             "Serie": serie,
@@ -134,8 +172,8 @@ async def scrape_lineup(context, url):
     finally:
         await page.close()
 
+
 async def main():
-    # Läs lineup-länkar
     lines = Path(LINKS_FILE).read_text(encoding="utf-8").splitlines()
     lineup_links = [l.strip() for l in lines if l.strip()]
     if not lineup_links:
